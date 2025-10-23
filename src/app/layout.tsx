@@ -1,6 +1,6 @@
 import "./globals.css";
-import { AuthProvider } from "@/context/AuthContext";
 import type { Metadata } from "next";
+import ClientLayout from "./ClientLayout";
 
 export const metadata: Metadata = {
   title: "Taekwondo Mario Gutiérrez",
@@ -14,10 +14,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es" suppressHydrationWarning>
-      <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
-        <AuthProvider>
-          <main className="flex flex-col min-h-screen">{children}</main>
-        </AuthProvider>
+      <body className="min-h-screen flex flex-col bg-gray-50 text-gray-900 antialiased">
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );

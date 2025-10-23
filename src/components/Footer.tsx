@@ -1,7 +1,7 @@
 export default function Footer() {
   return (
-    <footer className="border-t bg-gray-50 p-4 text-center text-sm text-gray-500">
-      © {new Date().getFullYear()} Mario Gutiérrez González · Todos los derechos reservados
+    <footer className="mt-auto border-t bg-gray-100 text-gray-600 py-4 text-center text-sm">
+      © {new Date().getFullYear()} Taekwondo Mario Gutiérrez · Todos los derechos reservados.
     </footer>
-  )
+  );
 }

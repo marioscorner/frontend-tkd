@@ -1,16 +1,16 @@
 import API from "./api";
-import type { AuthResponse, User } from "@/types/auth";
+import type { AuthResponse, User, Role } from "@/types/auth";
 
 export async function registerUser(
   email: string,
   username: string,
-  password: string
+  password: string,
+  role?: Role
 ): Promise<AuthResponse> {
-  const res = await API.post<AuthResponse>("users/register/", {
-    email,
-    username,
-    password,
-  });
+  const payload: Record<string, unknown> = { email, username, password };
+  if (role) payload.role = role;
+
+  const res = await API.post<AuthResponse>("users/register/", payload);
   return res.data;
 }
 
