@@ -19,9 +19,9 @@ export interface LastMessage {
 
 export interface Conversation {
   id: number;
-  name: string | null;
+  name?: string | null;
   is_group: boolean;
-  created_at?: string;
+  created_at: string; // ISO
   participants: ConversationParticipant[];
   last_message: LastMessage | null;
   unread_count: number;
@@ -34,5 +34,14 @@ export interface Message {
   edited_at?: string | null;
   is_deleted?: boolean;
   sender: { id: number; username: string };
-  conversation?: number; // opcional si lo devuelve el backend
+  conversation?: number;
+  // 🔁 NUEVO: read receipts
+  seen_by?: number[];
+  seen_by_other?: boolean | null; // solo 1:1 (true/false/null)
 }
+
+export type MessagesPage = {
+  results: Message[];
+  next: string | null;
+  previous: string | null;
+};

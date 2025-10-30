@@ -4,8 +4,8 @@ import Link from "next/link";
 
 export default function HeaderPublic() {
   return (
-    <header className="border-b bg-white/80 backdrop-blur-md shadow-sm">
-      <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+    <header className="h-16 flex items-center border-b bg-white/80 backdrop-blur-md shadow-sm">
+      <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 w-full">
         <div className="font-bold text-xl">🥋 Taekwondo Mario Gutiérrez</div>
         <ul className="flex gap-4 text-sm font-medium">
           <li><Link href="/" className="hover:underline">Inicio</Link></li>

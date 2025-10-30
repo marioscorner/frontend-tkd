@@ -1,32 +1,58 @@
-import API from "./api";
-import type { AuthResponse, User, Role } from "@/types/auth";
+// services/auth.ts
+import api from "@/lib/api";
 
-export async function registerUser(
-  email: string,
-  username: string,
-  password: string,
-  role?: Role
-): Promise<AuthResponse> {
-  const payload: Record<string, unknown> = { email, username, password };
-  if (role) payload.role = role;
-
-  const res = await API.post<AuthResponse>("users/register/", payload);
-  return res.data;
+export async function registerUser(data: {
+  username: string;
+  email: string;
+  password: string;
+}) {
+  return api.post("/api/users/register/", data);
 }
 
-export async function loginUser(email: string, password: string): Promise<User> {
-  const res = await API.post<AuthResponse>("users/login/", { email, password });
-  localStorage.setItem("access", res.data.access);
-  localStorage.setItem("refresh", res.data.refresh);
-  return res.data.user;
+export async function loginUser(data: { email: string; password: string }) {
+  return api.post("/api/users/login/", data);
 }
 
-export function logoutUser(): void {
-  localStorage.removeItem("access");
-  localStorage.removeItem("refresh");
+export async function getProfile() {
+  return api.get("/api/users/profile/");
 }
 
-export async function getProfile(): Promise<User> {
-  const res = await API.get<User>("users/profile/");
-  return res.data;
+export async function updateProfile(data: Record<string, unknown>) {
+  return api.put("/api/users/profile/", data);
+}
+
+// --- Verificación de email ---
+export async function requestEmailVerify(email: string) {
+  await api.post("/api/users/email/verify/request/", { email });
+}
+
+export async function confirmEmailVerify(uid: number, token: string) {
+  return api.post("/api/users/email/verify/confirm/", { uid, token });
+}
+
+// --- Reset de contraseña ---
+export async function requestPasswordReset(email: string) {
+  await api.post("/api/users/password/reset/request/", { email });
+}
+
+export async function confirmPasswordReset(
+  uid: number,
+  token: string,
+  new_password: string
+) {
+  return api.post("/api/users/password/reset/confirm/", {
+    uid,
+    token,
+    new_password,
+  });
+}
+
+// --- Logout con blacklist ---
+export async function logout(refresh: string) {
+  try {
+    await api.post("/api/users/logout/", { refresh });
+  } finally {
+    localStorage.removeItem("access");
+    localStorage.removeItem("refresh");
+  }
 }

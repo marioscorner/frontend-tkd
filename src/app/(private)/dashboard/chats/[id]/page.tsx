@@ -1,10 +1,12 @@
+// src/app/(private)/dashboard/chats/[id]/page.tsx  (REEMPLAZA)
+// Añade: cursor pagination (Cargar más), typing indicator y soporte a seen_by_other si viene del backend.
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useChatSocket } from "@/hooks/useChatSocket";
-import { listMessages, markConversationRead, getConversation } from "@/lib/chat";
-import type { Message, Conversation } from "@/types/chat";
+import { listMessages, listMessagesPage, markConversationRead, getConversation } from "@/lib/chat";
+import type { Message, Conversation, MessagesPage } from "@/types/chat";
 import Link from "next/link";
 
 type PageProps = { params: { id: string } };
@@ -15,98 +17,150 @@ export default function ChatDetailPage({ params }: PageProps) {
 
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [typingIds, setTypingIds] = useState<number[]>([]);
   const [loadingConv, setLoadingConv] = useState(true);
+  const [loadingMsgs, setLoadingMsgs] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [text, setText] = useState("");
 
-  // Socket (tiempo real)
-  const { connected, sendMessage, sendRead, setOnMessage } =
+  // WS
+  const { connected, sendMessage, sendRead, setOnMessage, sendTypingStart, sendTypingStop } =
     useChatSocket(Number.isFinite(conversationId) ? conversationId : null);
 
-  // Cargar detalle de la conversación
+  // Cargar conversación
   useEffect(() => {
     if (!Number.isFinite(conversationId)) return;
     let mounted = true;
     (async () => {
       try {
-        const data = await getConversation(conversationId);
-        if (mounted) setConv(data);
+        const c = await getConversation(conversationId);
+        if (mounted) setConv(c);
       } catch {
         if (mounted) setError("No se pudo cargar la conversación.");
       } finally {
         if (mounted) setLoadingConv(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [conversationId]);
 
-  // Cargar mensajes
+  // Cargar mensajes (primer bloque)
   useEffect(() => {
     if (!Number.isFinite(conversationId)) return;
     let mounted = true;
     (async () => {
       try {
-        const data: Message[] = await listMessages(conversationId);
-        const asc = [...data].reverse();
-        if (mounted) setMessages(asc);
+        // Intento con cursor
+        const page: MessagesPage = await listMessagesPage(conversationId, { page_size: 30 });
+        const asc = [...page.results].reverse();
+        if (mounted) {
+          setMessages(asc);
+          setNextCursor(page.next);
+        }
         await markConversationRead(conversationId);
       } catch {
-        if (mounted) setError("No se pudieron cargar los mensajes.");
+        // Compat: si falla por cursor, usa la lista simple existente
+        try {
+          const data: Message[] = await listMessages(conversationId);
+          if (mounted) setMessages(data);
+          await markConversationRead(conversationId);
+        } catch {
+          if (mounted) setError("No se pudieron cargar los mensajes.");
+        }
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) setLoadingMsgs(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [conversationId]);
+
+  // Cargar más (cursor)
+  async function handleLoadMore() {
+    if (!nextCursor) return;
+    try {
+      const res = await fetch(nextCursor, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("access") || ""}` },
+      });
+      const page = (await res.json()) as MessagesPage;
+      const extraAsc = [...page.results].reverse();
+      setMessages((prev) => [...extraAsc, ...prev]);
+      setNextCursor(page.next);
+    } catch {
+      // noop
+    }
+  }
 
   // WS: escuchar eventos
   useEffect(() => {
     setOnMessage((evt) => {
       if (evt.event === "message.new") {
-        setMessages((prev) => [...prev, evt.message]);
+        setMessages((prev) => [...prev, evt.message as Message]);
         sendRead();
+        // scroll al final
         setTimeout(() => {
           listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
         }, 0);
+      } else if (evt.event === "typing.start") {
+        setTypingIds((prev) => (prev.includes(evt.by) ? prev : [...prev, evt.by]));
+      } else if (evt.event === "typing.stop") {
+        setTypingIds((prev) => prev.filter((id) => id !== evt.by));
+      } else if (evt.event === "conversation.read") {
+        // opcional: podrías recalcular vistos localmente en base a evt.at
+      } else if (evt.event === "error") {
+        setError(evt.detail || "Error en el WebSocket.");
       }
     });
-  }, [setOnMessage, sendRead]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setOnMessage]);
 
-  // Auto-scroll
-  useEffect(() => {
-    if (!loading) {
-      listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-    }
-  }, [loading, messages.length]);
-
-  const handleSend = () => {
-    const text = draft.trim();
-    if (!text || !conversationId) return;
-    sendMessage(text);
-    setDraft("");
-  };
-
-  // Título según tipo de conversación
+  // Título de cabecera
   const title = useMemo(() => {
-    if (!conv) return `Chat #${conversationId}`;
+    if (!conv) return "Cargando…";
     if (conv.is_group) return conv.name || `Grupo #${conv.id}`;
-    // 1:1 → muestra el otro participante
-    const others = conv.participants
+    const me = user?.username;
+    return conv.participants
       .map((p) => p.user.username)
-      .filter((u) => u !== user?.username);
-    return others.join(", ") || `Chat #${conversationId}`;
-  }, [conv, user?.username, conversationId]);
+      .filter((u) => u !== me)
+      .join(", ");
+  }, [conv, user?.username]);
+
+  // Enviar
+  const handleSend = () => {
+    const v = text.trim();
+    if (!v) return;
+    setText("");
+    sendMessage(v);
+  };
 
   if (!Number.isFinite(conversationId)) {
     return (
+      <div className="rounded border border-red-200 bg-red-50 p-3 text-red-700">
+        Conversación inválida.
+      </div>
+    );
+  }
+
+  if (loadingConv || loadingMsgs) {
+    return <div className="p-6">Cargando…</div>;
+  }
+
+  if (error) {
+    return (
       <div className="p-6">
-        <p className="text-red-600">Conversación inválida.</p>
-        <Link href="/app/private/chats" className="text-blue-600 underline">
-          Volver a chats
+        <Link href="/app/private/chats" className="text-sm text-blue-600 underline">
+          ← Volver
         </Link>
+        <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-red-700">
+          {error}
+        </div>
       </div>
     );
   }
@@ -119,64 +173,72 @@ export default function ChatDetailPage({ params }: PageProps) {
           <Link href="/app/private/chats" className="text-sm text-blue-600 underline">
             ← Volver
           </Link>
-          <h1 className="text-lg font-semibold">
-            {loadingConv ? "Cargando…" : title}
-          </h1>
+          <h1 className="text-lg font-semibold">{title}</h1>
         </div>
-        <div className="text-xs text-gray-500">
-          {connected ? "Conectado" : "Reconectando..."}
-        </div>
+        <div className="text-xs text-gray-500">{connected ? "Conectado" : "Reconectando..."}</div>
       </div>
 
       {/* Mensajes */}
       <div ref={listRef} className="flex-1 space-y-2 overflow-auto p-4">
-        {error && (
-          <div className="rounded border border-red-200 bg-red-50 p-3 text-red-700">
-            {error}
+        {/* Cargar más */}
+        {nextCursor && (
+          <div className="mb-2 flex justify-center">
+            <button
+              className="rounded bg-gray-100 px-3 py-1.5 text-sm hover:bg-gray-200"
+              onClick={handleLoadMore}
+            >
+              Cargar mensajes anteriores
+            </button>
           </div>
         )}
 
-        {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-10 w-2/3 animate-pulse rounded bg-gray-100" />
-            ))}
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="py-10 text-center text-gray-500">Aún no hay mensajes.</div>
-        ) : (
-          messages.map((m) => {
-            const mine = m.sender.id === user?.id;
-            return (
-              <div key={m.id} className={`max-w-[70%] ${mine ? "ml-auto" : "mr-auto"}`}>
-                <div className={`rounded-lg px-3 py-2 ${mine ? "bg-blue-600 text-white" : "bg-gray-100"}`}>
-                  {!mine && (
-                    <div className="text-[10px] opacity-70">{m.sender.username}</div>
-                  )}
-                  <div className="text-sm">{m.content}</div>
-                </div>
-                <div className="mt-0.5 text-[10px] text-gray-400">
-                  {new Date(m.created_at).toLocaleTimeString()}
-                </div>
-              </div>
-            );
-          })
-        )}
+        {messages.map((m) => {
+          const mine = m.sender?.id === user?.id;
+          return (
+            <div
+              key={m.id}
+              className={`max-w-[80%] rounded px-3 py-2 ${
+                mine ? "ml-auto bg-blue-50" : "bg-gray-100"
+              }`}
+            >
+              {!mine && <div className="text-xs text-gray-500">{m.sender?.username}</div>}
+              <div>{m.content}</div>
+              {/* ✓✓ en 1:1 si el backend devuelve seen_by_other */}
+              {typeof m.seen_by_other === "boolean" && mine && (
+                <div className="mt-1 text-[10px] text-gray-400">{m.seen_by_other ? "Visto ✓✓" : "Enviado"}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      {/* Typing indicator */}
+      {typingIds.length > 0 && (
+        <div className="px-4 pb-2 text-xs text-gray-500">Escribiendo…</div>
+      )}
 
       {/* Input */}
       <div className="flex items-center gap-2 border-t p-3">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+        <textarea
+          ref={inputRef}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            sendTypingStart();
+            // auto stop tras 1.2s sin teclear
+            const t = setTimeout(() => sendTypingStop(), 1200);
+            return () => clearTimeout(t);
+          }}
+          onFocus={() => sendRead()}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               handleSend();
             }
           }}
+          rows={1}
           placeholder="Escribe un mensaje…"
-          className="flex-1 rounded border px-3 py-2"
+          className="flex-1 resize-none rounded border px-3 py-2"
         />
         <button
           onClick={handleSend}

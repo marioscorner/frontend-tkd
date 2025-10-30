@@ -1,16 +1,30 @@
+
 "use client";
 
 import { ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { AuthProvider } from "@/context/AuthContext";
-import LayoutHeader from "@/components/LayoutHeader";
-import Footer from "@/components/Footer";
+import HeaderPublic from "@/components/HeaderPublic";
+import HeaderPrivate from "@/components/HeaderPrivate";
+import FooterPublic from "@/components/Footer";
 
 export default function ClientLayout({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const isPrivate = pathname?.startsWith("/dashboard"); // URL real (los grupos de ruta NO salen en la URL)
+
   return (
     <AuthProvider>
-      <LayoutHeader />
-      <main className="flex-1 w-full mx-auto max-w-6xl px-4 py-8">{children}</main>
-      <Footer />
+      {/* Header fijo, escoge uno u otro */}
+      <div className="fixed top-0 left-0 right-0 z-50">
+        {isPrivate ? <HeaderPrivate /> : <HeaderPublic />}
+      </div>
+
+      {/* deja espacio para el header y el footer fijos */}
+      <main className="min-h-screen pt-20 pb-16">{children}</main>
+
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <FooterPublic />
+      </div>
     </AuthProvider>
   );
 }

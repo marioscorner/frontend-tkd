@@ -1,45 +1,113 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { getProfile, loginUser, logoutUser } from "@/lib/auth";
-import type { User, Role } from "@/types/auth";
+import type { User, Role, AuthResponse } from "@/types/auth";
+import api from "@/lib/api";
+
+// Si más adelante quieres volver a usar helpers de /lib/auth, puedes,
+// pero aquí lo dejamos autosuficiente y robusto para mock y backend real.
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_AUTH === "1";
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<boolean>;
+  logout: () => Promise<void>;
   hasRole: (...roles: Role[]) => boolean;
 }
 
-// 🔒 1. Creamos el contexto, sin permitir undefined
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // --- Helpers ---
+  const saveTokens = (access?: string, refresh?: string) => {
+    if (access) localStorage.setItem("access", access);
+    if (refresh) localStorage.setItem("refresh", refresh);
+  };
+
+  const clearTokens = () => {
+    localStorage.removeItem("access");
+    localStorage.removeItem("refresh");
+  };
+
+  // --- Arranque: recuperar sesión ---
   useEffect(() => {
-    async function checkUser() {
+    const boot = async () => {
       try {
-        const profile = await getProfile();
-        setUser(profile);
+        if (USE_MOCK) {
+          const raw = localStorage.getItem("mock_user");
+          setUser(raw ? JSON.parse(raw) : null);
+          return;
+        }
+
+        // Backend real: intenta obtener el perfil
+        const res = await api.get<User>("/users/profile/");
+        setUser(res.data ?? null);
       } catch {
         setUser(null);
       } finally {
         setLoading(false);
       }
-    }
-    checkUser();
+    };
+    boot();
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const u = await loginUser(email, password);
-    setUser(u);
+  const login = async (email: string, password: string): Promise<boolean> => {
+    try {
+      if (USE_MOCK) {
+        // Cualquier contraseña de 4+ caracteres
+        if (!email || password.length < 4) return false;
+        const mockUser: User = {
+          id: 1,
+          email: email.trim().toLowerCase(),
+          username: email.split("@")[0],
+          role: "ALUMNO",
+        };
+        localStorage.setItem("mock_user", JSON.stringify(mockUser));
+        setUser(mockUser);
+        return true;
+      }
+
+      // Backend real (Django DRF / JWT por lo que se ve en tu /lib/api)
+      const res = await api.post<AuthResponse>("/users/login/", {
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
+      // Esperamos { user, access, refresh }
+      const { user: u, access, refresh } = res.data;
+      saveTokens(access, refresh);
+      setUser(u);
+      return true;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (e) {
+      // Si se cae el backend, no reventamos el front
+      return false;
+    }
   };
 
-  const logout = () => {
-    logoutUser();
+  const doLogoutRequest = async () => {
+    try {
+      const refresh = localStorage.getItem("refresh");
+      if (refresh) {
+        await api.post("/users/logout/", { refresh });
+      }
+    } catch {
+      // silencio: si el backend no está, igualmente limpiamos tokens
+    }
+  };
+
+  const logout = async () => {
+    if (USE_MOCK) {
+      localStorage.removeItem("mock_user");
+      setUser(null);
+      return;
+    }
+    await doLogoutRequest();
+    clearTokens();
     setUser(null);
   };
 
@@ -52,11 +120,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// 🔒 2. Hook seguro (garantiza que nunca será undefined)
 export function useAuth(): AuthContextType {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth debe usarse dentro de un AuthProvider");
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth debe usarse dentro de un AuthProvider");
+  return ctx;
 }
